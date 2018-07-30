@@ -14,6 +14,7 @@
 static int hello_init(void)
 {
 	printk("Hello, shuningz\n");
+	//for patch test
 	return 0;
 }
 
