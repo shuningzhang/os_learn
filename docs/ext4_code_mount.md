@@ -1,9 +1,28 @@
 
-#接口入口
+# 基本实现流程
 挂载文件系统的命令行格式为:
 `mount -t EXT4 /dev/sdb /mnt/test_dir`
 
-该命令会触发一个系统调用,具体函数为sys_mount,如下代码是sys_mount的实现代码(fs/namespace.c).由该代码参数可以看出主要是mount命令传入的参数.
+文件系统挂载的函数调用关系如下所示,主要分为两个功能.一部分是从磁盘设备读取超级块等信息*构建vfsmount,super_block和dentry等结构体*,另一部分是将*构造的结构体与现有目录树建立关联*,也即加入当前目录树中.
+```
+01 sys_mount
+02   >do_mount
+03     >user_path
+04     >do_new_mount
+05      >get_fs_type  从全局文件系统类型列表中获取该类型指针
+06      >vfs_kern_mount  返回vfsmount结构指针
+07        >alloc_vfsmnt 返回一个mount类型指针
+08        >mount_fs (super.c) 返回dentry类型指针
+09          >type->mount   对于ext4文件系统是ext4_mount,主要完成超级块相关初始化及返回dentry信息
+10      >put_filesystem
+11      >do_add_mount  
+12        >real_mount  返回路径的挂载点
+13        >graft_tree
+14          >attach_recursive_mnt
+15            >mnt_set_mountpoint  构建vfsmount的从属关系
+```
+# 流程分析
+系统的mount命令会触发一个系统调用,具体函数为sys_mount,如下代码是sys_mount的实现代码(fs/namespace.c).由该代码参数可以看出主要是mount命令传入的参数.
 ```
 2932 SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
 2933                 char __user *, type, unsigned long, flags, void __user *, data)
@@ -40,35 +59,8 @@
 2964 }
 
 ```
-
-调用关系
-```
-sys_mount
-  >do_mount
-    >user_path
-    >do_new_mount
-      >get_fs_type
-      >vfs_kern_mount
-        >alloc_vfsmnt 返回一个mount类型指针
-        >mount_fs (super.c) 返回dentry类型指针
-          >type->mount
-      >put_filesystem
-      >do_add_mount
-        >real_mount
-        >graft_tree 
-```
-
-
-* * *
-
-- - -
-
-_ _ _
-fs f 
-_ _ _
-
-
-该函数调用的核心是do_mount,
+该函数对从用户太传入的参数进行处理,拷贝到内核态.功能实现是调用2954行的do_mount函数.
+do_mount的函数代码如下所示.
 - - -
 sys_mount->do_mount
 - - -
@@ -151,9 +143,32 @@ sys_mount->do_mount
 ```
 
 
+# ext4文件系统相关
+## ext4 mount
+
+fs/super.c
+
+```
+ext4_mount
+  >mount_bdev
+    >blkdev_get_by_path
+    >sget         获取超级块(super_block)
+    >fill_super   调用实际文件系统的超级块函数,对于ext4是ext4_fill_super,完成超级块数据结构的填充
+
+```
+
+## ext4 填充超级块
+
+```
+ext4_fill_super
+  >sb_bread_unmovable  从此读取超级块信息,组建通用超级块
+  >ext4_iget 获取根inode信息
+  >d_make_root  根据inode信息构建一个dentry
+  >ext4_setup_super 
+```
 
 
-#结构体定义
+# 相关结构体定义
 fs/mount.h文件中对mount的定义
 
 ```
