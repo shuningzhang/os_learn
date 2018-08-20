@@ -49,7 +49,7 @@ int scullc_trim(struct scullc_dev *dev);
 void scullc_cleanup(void);
 
 /* declare one cache pointer: use it for all devices */
-kmem_cache_t *scullc_cache;
+struct kmem_cache *scullc_cache;
 
 
 
@@ -118,7 +118,7 @@ int scullc_read_procmem(char *buf, char **start, off_t offset,
 #endif /* SCULLC_USE_PROC */
 
 /*
- * Open and close
+ * 打开设备 
  */
 
 int scullc_open (struct inode *inode, struct file *filp)
@@ -272,12 +272,12 @@ ssize_t scullc_write (struct file *filp, const char __user *buf, size_t count,
  * The ioctl() implementation
  */
 
-int scullc_ioctl (struct inode *inode, struct file *filp,
+long scullc_ioctl ( struct file *filp,
                  unsigned int cmd, unsigned long arg)
 {
 
-	int err = 0, ret = 0, tmp;
-
+	int err = 0,  tmp;
+	long ret = 0;
 	/* don't even decode wrong cmds: better returning  ENOTTY than EFAULT */
 	if (_IOC_TYPE(cmd) != SCULLC_IOC_MAGIC) return -ENOTTY;
 	if (_IOC_NR(cmd) > SCULLC_IOC_MAXNR) return -ENOTTY;
@@ -407,11 +407,11 @@ struct async_work {
 /*
  * "Complete" an asynchronous operation.
  */
-static void scullc_do_deferred_op(void *p)
+static void scullc_do_deferred_op(struct work_struct * work)
 {
-	struct async_work *stuff = (struct async_work *) p;
-	aio_complete(stuff->iocb, stuff->result, 0);
-	kfree(stuff);
+	//struct async_work *stuff = (struct async_work *) ;
+	//aio_complete(stuff->iocb, stuff->result, 0);
+	//kfree(stuff);
 }
 
 
@@ -437,23 +437,32 @@ static int scullc_defer_op(int write, struct kiocb *iocb, char __user *buf,
 		return result; /* No memory, just complete now */
 	stuff->iocb = iocb;
 	stuff->result = result;
-	INIT_WORK(&stuff->work, scullc_do_deferred_op, stuff);
-	schedule_delayed_work(&stuff->work, HZ/100);
+	INIT_WORK(&stuff->work, scullc_do_deferred_op);
+	//schedule_delayed_work(&stuff->work, HZ/100);
 	return -EIOCBQUEUED;
 }
 
-
-static ssize_t scullc_aio_read(struct kiocb *iocb, char __user *buf, size_t count,
-		loff_t pos)
+static ssize_t scullc_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
-	return scullc_defer_op(0, iocb, buf, count, pos);
+	return 0;
 }
 
-static ssize_t scullc_aio_write(struct kiocb *iocb, const char __user *buf,
-		size_t count, loff_t pos)
+static ssize_t scullc_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
-	return scullc_defer_op(1, iocb, (char __user *) buf, count, pos);
+	return 0;
 }
+
+//static ssize_t scullc_aio_read(struct kiocb *iocb, char __user *buf, size_t count,
+//		loff_t pos)
+//{
+//	return scullc_defer_op(0, iocb, buf, count, pos);
+//}
+//
+//static ssize_t scullc_aio_write(struct kiocb *iocb, const char __user *buf,
+//		size_t count, loff_t pos)
+//{
+//	return scullc_defer_op(1, iocb, (char __user *) buf, count, pos);
+//}
 
 
  
@@ -467,11 +476,11 @@ struct file_operations scullc_fops = {
 	.llseek =    scullc_llseek,
 	.read =	     scullc_read,
 	.write =     scullc_write,
-	.ioctl =     scullc_ioctl,
+	.unlocked_ioctl =     scullc_ioctl,
 	.open =	     scullc_open,
 	.release =   scullc_release,
-	.aio_read =  scullc_aio_read,
-	.aio_write = scullc_aio_write,
+	.read_iter =  scullc_read_iter,
+	.write_iter = scullc_write_iter,
 };
 
 int scullc_trim(struct scullc_dev *dev)
@@ -536,8 +545,10 @@ int scullc_init(void)
 		result = alloc_chrdev_region(&dev, 0, scullc_devs, "scullc");
 		scullc_major = MAJOR(dev);
 	}
-	if (result < 0)
+	if (result < 0) {
+		printk(KERN_NOTICE "chrdev register error!\n");
 		return result;
+	}
 
 	
 	/* 
@@ -558,7 +569,7 @@ int scullc_init(void)
 	}
 
 	scullc_cache = kmem_cache_create("scullc", scullc_quantum,
-			0, SLAB_HWCACHE_ALIGN, NULL, NULL); /* no ctor/dtor */
+			 SLAB_HWCACHE_ALIGN, 0, NULL); /* no ctor/dtor */
 	if (!scullc_cache) {
 		scullc_cleanup();
 		return -ENOMEM;
