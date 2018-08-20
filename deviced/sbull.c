@@ -22,6 +22,9 @@
 #include <linux/bio.h>
 
 #include <linux/device-mapper.h>
+#include <linux/preempt.h>
+#include <linux/proc_fs.h>
+
 
 MODULE_LICENSE("GPL");
 
@@ -34,7 +37,7 @@ module_param(hardsect_size, int, 0);
 static int nsectors = 1024;
 module_param(nsectors, int, 0);
 
-static int ndevices = 4;
+static int ndevices = 1;
 module_param(ndevices, int, 0);
 
 
@@ -71,6 +74,7 @@ struct sbull_dev {
 	struct request_queue *queue;
 	struct gendisk *gd;
 	struct timer_list timer;
+	struct block_device* bdev;
 
 };
 
@@ -205,10 +209,12 @@ static void sbull_request(struct request_queue* q)
 {
 	struct request* req;
 	struct bio* bio;
+	//struct buffer_head* bh;
+	struct sbull_dev* dev;
 	printk(KERN_NOTICE "sbull new request\n");
 
 	while ( (req = blk_peek_request(q) ) != NULL ) {
-		struct sbull_dev* dev = req->rq_disk->private_data;
+		dev = req->rq_disk->private_data;
 		if ( req->cmd_type != REQ_TYPE_FS ) {
 			printk(KERN_NOTICE "Skip non-fs request \n");
 			//sbull_transfer(dev, blk_rq_pos(req), blk_rq_sectors(req), req->buffer, rq_data_dir(req));
@@ -222,11 +228,29 @@ static void sbull_request(struct request_queue* q)
 
 		__rq_for_each_bio(bio, req)
 			sbull_xfer_bio(dev, bio);
+			
 
 		__blk_end_request_all(req, 0);
+		/*
+		preempt_disable();
+		bh = __getblk_gfp(dev->bdev, 0, 512, __GFP_MOVABLE);
+		preempt_enable();
+		if (!bh) {
+			printk(KERN_ERR "error\n");
+		}
+
+		lock_buffer(bh);
+		memcpy(bh->b_data, "hello", 5);
+		flush_dcache_page(bh->b_page);
+		set_buffer_uptodate(bh);
+		mark_buffer_dirty(bh);
+
+		unlock_buffer(bh);
+		*/
+
+	}
 
 	
-	}
 
 
 }
@@ -242,6 +266,90 @@ static struct block_device_operations sbull_ops = {
 
 };
 
+static int sbull_proc_show(struct seq_file *seq, void *v)
+{
+	seq_printf(seq,
+			"hello");
+	return 0;
+}
+
+static int sbull_proc_open(struct inode *inode, struct file *file)
+{
+
+	return single_open(file, sbull_proc_show, NULL);
+}
+
+static ssize_t sbull_proc_read(struct file* file, char __user* buf,
+		size_t count, loff_t* ppos)
+{
+	char kbuf[128];
+	size_t len;
+	struct sbull_dev *dev = file->private_data;
+        struct buffer_head* bh;
+
+	len = 10; //min(count, sizeof(kbuf) - 1);
+	
+
+	bh = __getblk_gfp(dev->bdev, 0, 512, __GFP_MOVABLE);
+	if (!bh) {
+		printk(KERN_ERR "error\n");
+	}
+
+	memcpy(kbuf, bh->b_data, len);
+	kbuf[len] = '\0';
+	printk("read data %d %s\n" ,len, kbuf);
+	lock_buffer(bh);
+	
+	if ( copy_to_user(buf, kbuf, len) ) {
+		unlock_buffer(bh);
+		return -EFAULT;
+	}
+
+	unlock_buffer(bh);
+
+	*ppos = len - 1;
+
+	return len;
+
+}
+
+static ssize_t sbull_proc_write(struct file* file, const char __user* buf,
+		size_t count, loff_t* ppos)
+{
+	char kbuf[128];
+	size_t len;
+	struct sbull_dev *dev = file->private_data;
+        struct buffer_head* bh;
+
+	len = min(count, sizeof(kbuf) - 1);
+	if ( copy_from_user(kbuf, buf, len) ) {
+		return -EFAULT;
+	}
+	kbuf[len] = '\0';
+
+	bh = __getblk_gfp(dev->bdev, 0, 512, __GFP_MOVABLE);
+	if (!bh) {
+		printk(KERN_ERR "error\n");
+	}
+
+	lock_buffer(bh);
+	memcpy(bh->b_data, kbuf, len);
+	flush_dcache_page(bh->b_page);
+	set_buffer_uptodate(bh);
+	mark_buffer_dirty(bh);
+
+	unlock_buffer(bh);
+
+	return count;
+
+}
+static struct file_operations sbull_proc_fops = {
+	.owner = THIS_MODULE,
+	.open = sbull_proc_open,
+	.read = seq_read,
+	.write = sbull_proc_write,
+	.llseek = seq_lseek,
+};
 
 static void setup_device(struct sbull_dev* dev, int which)
 {
@@ -291,6 +399,12 @@ static void setup_device(struct sbull_dev* dev, int which)
 	
 	}
 
+
+	//here open a disk
+	dev->bdev = blkdev_get_by_path("/dev/sdb", FMODE_READ | FMODE_WRITE | FMODE_EXCL, dev);
+	if (IS_ERR(dev->bdev)) {
+		printk(KERN_NOTICE "open device sdb error!\n");
+	}
 //	blk_queue_hardsect_size(dev->queue, hardsect_size);
 	//dev->queue->hardsect_size = hardsect_size;
 	dev->queue->queuedata = dev;
@@ -312,6 +426,10 @@ static void setup_device(struct sbull_dev* dev, int which)
 	printk(KERN_NOTICE "Disk name %s\n", dev->gd->disk_name);
 	set_capacity( dev->gd, nsectors*(hardsect_size/KERNEL_SECTOR_SIZE) );
 	add_disk(dev->gd);
+
+	printk(KERN_NOTICE "dev addr %p\n", dev);
+	
+
 	return;
 
 
@@ -326,6 +444,8 @@ out_vfree:
 static int __init sbull_init(void)
 {
 	int i;
+	struct proc_dir_entry* entry;
+
 
 	sbull_major = register_blkdev(sbull_major, "sbull");
 	if (sbull_major <= 0)
@@ -344,6 +464,13 @@ static int __init sbull_init(void)
 	{
 		setup_device(devices + i, i);
 	}
+
+
+	entry = proc_create("sbull", 0, NULL, &sbull_proc_fops);
+	if ( entry == NULL) {
+		printk(KERN_ERR "no memory!\n");
+	}
+
 	
 	return 0;
 
@@ -381,9 +508,15 @@ static void sbull_exit(void)
 		if (dev->data) {
 			vfree(dev->data);
 		}
+
+		if (dev->bdev) {
+			blkdev_put(dev->bdev, FMODE_WRITE | FMODE_READ | FMODE_EXCL);
+		
+		}
 	
 	}
 
+	remove_proc_entry("sbull", NULL);
 	unregister_blkdev(sbull_major, "sbull");
 	kfree(devices);
 }
