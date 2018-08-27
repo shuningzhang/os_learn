@@ -10,10 +10,16 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/mm.h>
+
+struct test{
+    int a;
+    int* b;
+};
 
 static int hello_init(void)
 {
-	printk("Hello, shuningz\n");
+	printk("Hello, shuningz %d\n", sizeof(struct test));
 	//for patch test
 	return 0;
 }
