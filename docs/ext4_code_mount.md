@@ -151,8 +151,16 @@ fs/super.c
 ```
 ext4_mount
   >mount_bdev
-    >blkdev_get_by_path
-    >sget         获取超级块(super_block)
+    >blkdev_get_by_path  通过文件名打开块设备
+      >lookup_bdev 
+        >kern_path   根据用户态的文件名字符串,返回路径信息
+          >filename_lookup
+            >path_lookupat
+              >path_init
+              >
+        >d_backing_inode  返回dentry关联的inode信息
+        >bd_acquire
+    >sget         获取超级块(super_block)数据结构,并且将块设备关联到该数据结构
     >fill_super   调用实际文件系统的超级块函数,对于ext4是ext4_fill_super,完成超级块数据结构的填充
 
 ```
@@ -264,3 +272,18 @@ include/linux/path.h
   9         struct dentry *dentry;
  10 };
  ```
+
+```
+ 495 struct nameidata {
+ 496         struct path     path;
+ 497         struct qstr     last;
+ 498         struct path     root;
+ 499         struct inode    *inode; /* path.dentry.d_inode */
+ 500         unsigned int    flags;
+ 501         unsigned        seq, m_seq;
+ 502         int             last_type;
+ 503         unsigned        depth;
+ 504         struct file     *base;
+ 505         char *saved_names[MAX_NESTED_LINKS + 1];
+ 506 };
+```
