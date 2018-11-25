@@ -1,38 +1,17 @@
-
-
-
-
-
-
-Network Working Group                             Sun Microsystems, Inc.
-Request for Comments: 1094                                    March 1989
-
-
-            NFS: Network File System Protocol Specification
-
 STATUS OF THIS MEMO
+本备忘录的状态
 
-   This RFC describes a protocol that Sun Microsystems, Inc., and others
-   are using.  A new version of the protocol is under development, but
-   others may benefit from the descriptions of the current protocol, and
-   discussion of some of the design issues.  Distribution of this memo
-   is unlimited.
+This RFC describes a protocol that Sun Microsystems, Inc., and others are using.  A new version of the protocol is under development, but others may benefit from the descriptions of the current protocol, and discussion of some of the design issues.  Distribution of this memo is unlimited.
 
-1. INTRODUCTION
+本RFC描述了一个在太阳微系统公司和其它正在使用的协议。新版本的协议正在开发中，但其他人仍然可以从当前协议的描述中及设计问题的讨论中受益。本备忘录的分发不受任何限制。
 
-   The Sun Network Filesystem (NFS) protocol provides transparent remote
-   access to shared files across networks.  The NFS protocol is designed
-   to be portable across different machines, operating systems, network
-   architectures, and transport protocols.  This portability is achieved
-   through the use of Remote Procedure Call (RPC) primitives built on
-   top of an eXternal Data Representation (XDR).  Implementations
-   already exist for a variety of machines, from personal computers to
-   supercomputers.
+## 1. INTRODUCTION（引言）
 
-   The supporting mount protocol allows the server to hand out remote
-   access privileges to a restricted set of clients.  It performs the
-   operating system-specific functions that allow, for example, to
-   attach remote directory trees to some local file system.
+The Sun Network Filesystem (NFS) protocol provides transparent remote access to shared files across networks.  The NFS protocol is designed to be portable across different machines, operating systems, network architectures, and transport protocols.  This portability is achieved through the use of Remote Procedure Call (RPC) primitives built on top of an eXternal Data Representation (XDR).  Implementations already exist for a variety of machines, from personal computers to supercomputers.
+
+太阳网络文件系统（NFS）协议提供了透明的通过网络远程访问共享文件的方式。NFS协议被设计于可以很轻松的跨不同的机器、操作系统、网络架构和传输协议。
+
+The supporting mount protocol allows the server to hand out remote access privileges to a restricted set of clients.  It performs the operating system-specific functions that allow, for example, to attach remote directory trees to some local file system.
 
 1.1.  Remote Procedure Call
 
