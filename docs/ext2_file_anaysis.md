@@ -384,6 +384,83 @@ int block_write_begin(struct address_space *mapping, loff_t pos, unsigned len,
 # 文件夹遍历
 
 # 创建扩展属性
+扩展属性（xattrs）提供了一个机制用来将键值对（Key/Value）永久地关联到文件，让现有的文件系统得以支持在原始设计中未提供的功能。扩展属性是文件系统不可知论者，应用程序可以通过一个标准的接口来操纵他们，此接口不因文件系统而异。每个扩展属性可以通过唯一的键来区分，键的内容必须是有效的UTF-8，格式为namespace.attribute，每个键采用完全限定的形式，也就是键必需有一个确定的前缀（例如user）。
+
+Linux操作系统有如下集中扩展属性：
+- system：用于实现利用扩展属性的内核功能，例如访问控制表。eg：system.posix_acl_access便是位于此用户空间的扩展属性，用户是否可以读取或写入这些属性取决于所使用的安全模块。
+- security：用于实现安全模块。
+- trusted：把受限制的信息存入用户空间。
+- user：一般进程所使用的标准命名空间，经过一般文件权限位来控制此命名空间的访问。
+
+在Ext2文件系统中，扩展属性存储在一个单独的磁盘逻辑块中，其位置由inode中的i_file_acl成员指定。如图所示是键值对在该逻辑块中的布局示意图。其前32个字节是一个描述头（ext2_xattr_header），描述该逻辑块基本使用情况。而下面紧跟着的是扩展属性项（ext2_xattr_entry），扩展属性项描述了扩展属性的键名称等信息，同时包含值的偏移等内容。这里需要说明的是**扩展属性项是从上往下生长的，而值则是从下往上生长**。
+
+![图2 大厦布局图](./ext2_file/ext2_xattr_layout.png)
+
+如下代码是描述头的结构体定义，里面有魔术、引用计数和哈希值等内容。这里魔术的作用是确认该逻辑块的内容是扩展属性逻辑块，避免代码Bug或者磁盘损坏等情况下给用户返回错误的结果。引用计数和哈希值的作用是实现多文件的扩展属性共享。所谓扩展属性共享是指，如果多个文件的扩展属性完全一样的情况下，这些文件的扩展属性将采用相同的磁盘逻辑块存储，这样可以大大的节省存储空间。另外，Ext2借用的哈希缓存，将文件属性的哈希值存储在其中，用于快速判断文件是否存在相同的扩展属性逻辑块。
+
+```c
+struct ext2_xattr_header {
+        __le32  h_magic;        /* magic number for identification */
+        __le32  h_refcount;     /* reference count */
+        __le32  h_blocks;       /* number of disk blocks used */
+        __le32  h_hash;         /* hash value of all attributes */
+        __u32   h_reserved[4];  /* zero right now */
+};
+
+```
+
+扩展属性项在磁盘上是从上往下生长的，但需要注意的是由于每个扩展属性的键名称的长度不一定一样，因此该结构体的大小也是变化的。因此，我们无法直接找到某一个扩展属性项的位置，必需从头到位进行遍历。由于描述头的大小是确定的，这样第一个扩展属性项就可以找到，而下一个扩展属性项就可以根据本扩展属性项的位置及其中的e_name_len成员计算得到。
+
+```c
+struct ext2_xattr_entry {
+        __u8    e_name_len;     /* length of name */
+        __u8    e_name_index;   /* attribute name index */
+        __le16  e_value_offs;   /* offset in disk block of value */
+        __le32  e_value_block;  /* disk block attribute is stored on (n/i) */
+        __le32  e_value_size;   /* size of attribute value */
+        __le32  e_hash;         /* hash value of name and value */
+        char    e_name[0];      /* attribute name */
+};
+```
+
+操作系统提供了一些API来设置文件的扩展属性，分别是setxattr、fsetxattr和lsetxattr。这几个函数应用场景略有差异，但功能基本一致。本文以fsetxattr为例进行介绍。假设用户调用该接口为某个文件设置user前缀的扩展属性，此时的整个函数调用栈如图所示。本调用栈包含三部分内容，分别是用户态接口、VFS调研栈和Ext2文件系统调用栈。
+
+![图2 扩展属性设置流程](./ext2_file/ext2_xattr_setfattr.png)
+
+这里面除了Ext2文件系统实现的设置扩展属性的函数逻辑相对复杂外，整个函数栈的代码逻辑非常简单，这里就不过多介绍了。但是，这里有几点需要说明的：
+
+- 属性设置公共接口调用：这个调用就是上图中`i_op->setxattr`的调用，这个指针是分配inode节点的时候初始化的。这个函数屏蔽了不同的扩展属性（上文已经交代Linux文件系统有trusted和user等多种扩展属性）。需要注意的是Ext2文件系统并没有实现自己的特有函数，而是调用了VFS提供的公共函数（generic_setxattr），如下代码所示。
+```
+const struct inode_operations ext2_file_inode_operations = { 
+#ifdef CONFIG_EXT2_FS_XATTR
+        .setxattr       = generic_setxattr,
+        .getxattr       = generic_getxattr,
+        .listxattr      = ext2_listxattr,
+        .removexattr    = generic_removexattr,
+#endif
+        .setattr        = ext2_setattr,
+        .get_acl        = ext2_get_acl,
+        .set_acl        = ext2_set_acl,
+        .fiemap         = ext2_fiemap,
+};
+```
+- 具体类型的扩展属性设置接口调用：这个调用就是上图中`handler->set`的调用，这个指针是在文件系统挂载的时候初始化的，其内容初始化了超级块的成员变量s_xattr。其中handler指针是根据用户传入的键名称确定的。具体获取是在函数xattr_resolve_name中实现的，其对超级块中的s_xattr变量进行遍历，从而找到可以处理该扩展属性的handler。
+```
+const struct xattr_handler *ext2_xattr_handlers[] = {
+        &ext2_xattr_user_handler,
+        &ext2_xattr_trusted_handler,                                                 
+#ifdef CONFIG_EXT2_FS_POSIX_ACL
+        &posix_acl_access_xattr_handler,
+        &posix_acl_default_xattr_handler,               
+#endif
+#ifdef CONFIG_EXT2_FS_SECURITY
+        &ext2_xattr_security_handler,                 
+#endif  
+        NULL                                    
+};
+```
+
+
 
 # 删除扩展属性
 
