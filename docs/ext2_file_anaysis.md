@@ -369,8 +369,163 @@ int block_write_begin(struct address_space *mapping, loff_t pos, unsigned len,
 ```
 
 # 读数据流程
+读数据流程关于如何从用户态到Ext2文件系统公共部分（VFS）的流程本文不再详细介绍，这一部分与写流程基本一致，具体可以参考文末的相关文章介绍。如图是从用户态到Ext2文件系统的函数调用图，从图上可以看到对于Ext2文件系统在读数据流程中调用了大量VFS的函数，这主要原因是Ext2是Linux的原生文件系统，其实耦合还是比较大的。我们仔细观察一下，实际起作用的函数是Ext2文件系统的ext2_file_read_iter函数。
+
+![图1 读数据整体流程](http://upload-images.jianshu.io/upload_images/11058170-50cf9176885a38d9.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+像写数据一样，读数据也分为Direct读和缓存读两种形式，Direct读是从磁盘直接读取数据，而缓存读则需要先将磁盘数据读到页缓存，然后在将数据拷贝到用户的缓冲区。本文照例只介绍缓存读的场景，对于Direct读请自行阅读代码理解。
+
+对于缓存读的流程，概括起来分为两个主要步骤，**一个是查找页缓存（如果没有则分配新的），第二步是根据页缓存的状态从磁盘读取数据并填充页缓存（如果页缓存数据最新则不需要从磁盘读取数据）**。
+
+## 缓存命中
+其实上图是一个比较复杂的函数调用关系图，这里处理了缓存没有命中的情况下的读数据的流程。如果缓存命中，整个读数据的流程将非常简单，我们可以简化为图2所示。可以看出此时在VFS的函数do_generic_file_read中即可完成整个数据的读取过程。
+
+![图2 读数据缓存命中](http://upload-images.jianshu.io/upload_images/11058170-60153183383057b5.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+在VFS函数do_generic_file_read中的主要流程如图3所示。这里假设缓存中存储的数据是最新的，也即页缓存的数据新于磁盘的数据。这样整个读取过程可以分为两步，首先通过find_get_page获取缓存页；然后判断页缓存的标记满足条件后直接调用copy_page_to_iter将页缓存的内容拷贝到用户态的缓冲区。当然实际还有其它一些情况的存在，比如虽然页缓存存在但不是最新，则需要从磁盘读取数据。或者页缓存存在，但正在进行预读操作，则需要等待预读完成等。
+
+![图3 读数据缓存命中](http://upload-images.jianshu.io/upload_images/11058170-05d20ddc2e57b298.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+总之来说，缓存命中的常见还是比较简单的，下面我们介绍一下缓存不命中的场景。
+
+## 非缓存命中
+如果没有缓存命中，此时就需要做两件事情，一个是分配页缓存并建立与磁盘位置映射，另一个是向磁盘提交读取数据的请求，完成数据的读取。为了提高读取数据的效率，这里其实实现了一个称为“预读”的功能，所谓预读就是提前从磁盘读取比较多的数据，为下次读数据做准备。这个特性对顺序读非常有效，可以明显的减少磁盘请求的数量，从而提升读数据的性能。
+
+![图4 读数据缓存命中](http://upload-images.jianshu.io/upload_images/11058170-1fdc0d6f65fdffd1.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+预读的基本规则主要包含两个，一个是在读请求中读到缺失页面(missing page)，进行同步预读；另一个是读到预读页面(PG_readahead page)，则进行异步预读。如图4是预读的基本示意图，tx代表请求时间序列。
+1） t0触发同步预读，也就是文件系统除了读取请求的数据外，还会额外读取一部分数据；
+2） t1时由于读到的缓存页有预读标记，因此会触发异步预读；
+3） t2时由于缓存已经存在，因此直接从缓存读取后返回；
+以此类推，当再次碰到有预读标记的页时进行异步预读。另外，这里面有个概念叫“预读窗口”，预读窗口是指一次从磁盘预读数据的多少。预读窗口是滑动的，也就是大小会根据命中情况进行变化，如果命中则会变大，这样可以有效的提高读取的效率。如下是用于滑动窗口的数据结构。
+```c
+struct file_ra_state {
+	pgoff_t start;			/* where readahead started */
+	unsigned int size;		/* # of readahead pages */
+	unsigned int async_size;	/* do asynchronous readahead when
+					   there are only # of pages ahead */
+
+	unsigned int ra_pages;		/* Maximum readahead window */
+	unsigned int mmap_miss;		/* Cache miss stat for mmap accesses */
+	loff_t prev_pos;		/* Cache last read() position */
+};
+```
+理解了上述概念之后，我们分析一下整个读操作的流程。由图1，同步预读和异步预读的起始逻辑在函数do_generic_file_read中。其中find_get_page用于查找是否有缓存并返回找到的缓存页。如果没有找到缓存页则运行红色方框的流程，进行同步预读。如果找到缓存页，并且该缓存页有预读标记则运行绿色方框的流程，进行异步预读。
+
+![图5 读数据缓存基本逻辑](http://upload-images.jianshu.io/upload_images/11058170-c44efcf5e97ef057.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+对比一下同步预读和异步预读的主要调用流程，可以看出最终都会调用到__do_page_cache_readahead函数。实现逻辑的差异主要在ondemand_readahead函数中。基本差异是对滑动窗口的计算，对于同步预读由于要考虑随机读的情况，避免读过多的内容；而对于异步预读则根据达到预读标记则调整一个比较大的滑动窗口。
+`page_cache_sync_readahead->ondemand_readahead->__do_page_cache_readahead`
+`page_cache_async_readahead->ondemand_readahead->__do_page_cache_readahead`
+
+数据读取操作的最终实现在__do_page_cache_readahead函数中，这里面主要完成两个功能，一个是分配页缓存(page_cache_alloc_readahead)，另一个是提交读请求到块设备层(read_pages)。
+
+![图6 读数据缓存基本逻辑](http://upload-images.jianshu.io/upload_images/11058170-dd30b5ac06972787.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+上图中的函数指针具体实现是Ext2文件系统ext2_readpages函数，该函数的调用流程大致如图7所示。该函数主要实现缓存页的映射和从磁盘读取数据的操作。磁盘读取调用的块设备层的submit_bio函数。
+
+![图7 读数据缓存基本逻辑](http://upload-images.jianshu.io/upload_images/11058170-ce88c83a26626c5c.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240)
+
+至此，将磁盘上的数据读取到了页缓存中，其后的流程与缓存命中场景一致，也即拷贝页缓存的内容到用户态缓冲区等。
+
 
 # 磁盘块分配
+
+在实际写数据到磁盘之前需要分配磁盘上的空间。这里的写数据包括写文件数据、在目录中创建文件和添加扩展属性等等。但凡需要存储新数据的场景都需要分配磁盘空间。分配磁盘空间的主要功能在函数`ext2_get_blocks`中实现，该函数的原型如下所示：
+
+```
+static int ext2_get_blocks(struct inode *inode,
+                           sector_t iblock, unsigned long maxblocks,
+                           struct buffer_head *bh_result,
+                           int create)
+```
+
+该函数原型中，重点需要说明的是iblock参数，该参数表示文件的逻辑位置，位置以文件系统的块大小为单位，值为文件系统的以0为起始位置逻辑地址。举个简单的例子，加入文件系统格式化时块大小是2K，而此时写入数据的偏移为4K，那么此时iblock就是2。也就是说，该函数通过数据在文件中的逻辑位置计算需要分配多少磁盘空间。
+
+![图1 主流程](./ext2_file/ext2_alloc_main.png)
+
+函数ext2_get_blocks的主流程如图1所示，该函数主要完成三方面的工作：
+1. **计算并获取存储路径**，我们知道文件数据是通过间接块的方式存储的，因此这里主要是根据数据逻辑地址计算出其存储的路径情况，并获得该路径。
+2. 计算需要分配的块的数量和期望的磁盘物理位置。
+3. **分配磁盘空间**，计算出需要的磁盘空间的数量后，最后该函数调用ext2_alloc_branch来分配需要的磁盘空间，具体就是将空间管理的位图置位。
+
+![图2 间接块](./ext2_file/ext2_indirect.png)
+为了容易理解磁盘整个分配磁盘空间的流程，我们先回顾一下Ext2的间接块结构，如图2所示（具体解释请参考本号历史文章）。为了理解更清楚一些，我们假设请求的数据位置需要二级间接块，因此，我们将该关系放大，如图3所示。我们知道对于Ext2来说，其地址是32位的，因此在间接块中的数据其实可以理解为无符号整型的大数组。其中数组中的每一项就是一个下一级磁盘数据块的地址。这样我们根据数据在文件中的逻辑地址就可以计算出来需要几级间接块及位置数据在该间接块中存放的位置。
+
+![图3 二级间接块](./ext2_file/ext2_path.png)
+
+有了间接块需要的数据，我们在结合数据本身需要的磁盘空间，就可以计算出本次请求需要申请的磁盘空间。最后就是根据这些来分配磁盘空间了。下面我们分布详细介绍一下各个流程的实现细节。
+
+## 计算存储路径
+所谓计算存储路径是指计文件数据逻辑地址在间接块中存储的物理地址表示。仍然以上述图3为例，对于二级间接块可存储的情况，在分配磁盘空间之前需要计算出其在一级间接块和二级间接块中的位置。这样，在后续的数据查找流程，根据这些间接块中存储的地址信息就可以找到文件某个位置的数据在磁盘的物理地址。
+函数`ext2_block_to_path`用于计算数据在间接块数组中存放的路径。**该函数的功能主要是根据逻辑地址计算出在深度及每一层的位置**。前文我们已经知道文件数据的放置方式，结合图3以比较清楚的理解本函数的代码。这里根据数据的逻辑地址分为4种情况，分别如下：
+1. ** 不需要间接块 **： 也就是数据目的位置（以文件块大小为单位）在12以内，则说明是直接引用，不需要间接块，此时在数组的前12个元素中的一个。
+2. ** 一级间接块 **： 数据范围在一级间接块可表示的范围内，此时表示路径的数组的第一个元素是inode数组中的第12个元素，而第二个元素则是在间接块中的具体位置。比如i_block是18，此时通过直接寻址无法满足要求，因此需要一级间接块。这样，offsets中第一个元素的值是12，表示是一级间接块；offsets的第二个元素是6，因为直接索引可以表示12个数据块，因此在间接块中的分别可以存储从第13到256+12的数据范围，对于位置为18的数据在间接块的位置就是6。
+3. ** 二三级间接块 **： 以此类推，根据逻辑地址的大小可能会需要二级甚至三级间接块，依照这种算法可以计算出每一级间接块的位置。这里不在赘述。
+
+下面是本函数的代码，本文加了一些注释，代码本身比较简单，本文不在赘述。这里需要注意的是，除了返回深度和每一层的位置外，还会返回在最后的间接块上可容纳的地址的数量。比如计算出来在最后一级间接块的位置是250，那么最多可容纳6个地址。
+```
+static int ext2_block_to_path(struct inode *inode,
+                        long i_block, int offsets[4], int *boundary)
+{
+        int ptrs = EXT2_ADDR_PER_BLOCK(inode->i_sb);  	//这里计算出每个间接块可以存储多少地址
+        int ptrs_bits = EXT2_ADDR_PER_BLOCK_BITS(inode->i_sb);  //块大小的位数
+        const long direct_blocks = EXT2_NDIR_BLOCKS,  	//直接块的数量
+                indirect_blocks = ptrs,					//间接块可存储地址的数量
+                double_blocks = (1 << (ptrs_bits * 2)); //二级间接块可存储地址的数量
+        int n = 0; 
+        int final = 0; 
+
+        if (i_block < 0) { 
+                ext2_msg(inode->i_sb, KERN_WARNING,
+                        "warning: %s: block < 0", __func__);
+        } else if (i_block < direct_blocks) {
+                offsets[n++] = i_block;
+                final = direct_blocks;
+        } else if ( (i_block -= direct_blocks) < indirect_blocks) {
+                offsets[n++] = EXT2_IND_BLOCK;
+                offsets[n++] = i_block;
+                final = ptrs;
+        } else if ((i_block -= indirect_blocks) < double_blocks) {
+                offsets[n++] = EXT2_DIND_BLOCK;
+                offsets[n++] = i_block >> ptrs_bits;
+                offsets[n++] = i_block & (ptrs - 1);
+                final = ptrs;
+        } else if (((i_block -= double_blocks) >> (ptrs_bits * 2)) < ptrs) {
+                offsets[n++] = EXT2_TIND_BLOCK;
+                offsets[n++] = i_block >> (ptrs_bits * 2);
+                offsets[n++] = (i_block >> ptrs_bits) & (ptrs - 1);
+                offsets[n++] = i_block & (ptrs - 1);
+                final = ptrs;
+        } else {
+                ext2_msg(inode->i_sb, KERN_WARNING,
+                        "warning: %s: block is too big", __func__);
+        }
+        if (boundary)
+                *boundary = final - 1 - (i_block & (ptrs - 1));
+
+        return n;
+}
+```
+
+## 获取存储路径
+前面逻辑计算出了深度和每一级间接块应该存储的信息，但具体的间接块目前处于什么情况并不清楚。仍然以上述二级间接块为例，可能会出现如下几种情况：
+1. 用户访问的数据位置所需要的间接块已经全部分配了
+2. 一级间接块已经具备了，但二级间接块不具备
+3. 所有间接块都不具备
+
+因此，这里的工作就是根据当前信息及上一步计算出的信息进行综合判断，确定已经具备的间接块，并返回关键信息，为后续流程分配磁盘空间做准备。具体实现在函数ext2_get_branch中。该函数的输入是上一个函数的计算结果，输出是需要分配的间接块的信息（chain）。
+```
+static Indirect *ext2_get_branch(struct inode *inode,
+                                 int depth,
+                                 int *offsets,
+                                 Indirect chain[4],
+                                 int *err)
+```
+
+## 分配磁盘空间
+完成
+
 
 # 磁盘块回收
 
@@ -471,3 +626,12 @@ const struct xattr_handler *ext2_xattr_handlers[] = {
 
 # 主要数据结构
 
+
+
+ext2: Adjust the comment of function ext2_alloc_branch
+
+The name of argument is error in the header comment.
+@num should be @indirect_blks.
+At the same time, there was a lack of description of the two parameters
+@blks and @goal.
+This commit therefore fixes this header comment.
