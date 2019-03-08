@@ -1,9 +1,3 @@
-
-
-
-
-
-
 Internet Engineering Task Force (IETF)                    M. Chadalapaka
 Request for Comments: 7143                                     Microsoft
 Obsoletes: 3720, 3980, 4850, 5048                              J. Satran
@@ -19,6 +13,7 @@ ISSN: 2070-1721                                                      IBM
                              (Consolidated)
 
 Abstract
+摘要
 
    This document describes a transport protocol for SCSI that works on
    top of TCP.  The iSCSI protocol aims to be fully compliant with the
@@ -29,6 +24,11 @@ Abstract
    a new public extension key to iSCSI.  RFC 5048 offered a number of
    clarifications as well as a few improvements and corrections to the
    original iSCSI protocol.
+
+   本文描述了一个在TCP之上的SCSI传输协议。iSCSI协议的目标是完全兼容标准
+   化的SCSI架构模型（SAM-2）。RFC 3720定义了原始的iSCSI协议。RFC 3721讨
+   论了iSCSI命名示例和发现技术。之后，RFC 3980向iSCSI协议添加了额外的命
+   名格式。
 
    This document obsoletes RFCs 3720, 3980, 4850, and 5048 by
    consolidating them into a single document and making additional
