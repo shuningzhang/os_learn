@@ -1,9 +1,3 @@
-
-
-
-
-
-
 Internet Engineering Task Force (IETF)                    T. Haynes, Ed.
 Request for Comments: 7530                                  Primary Data
 Obsoletes: 3530                                           D. Noveck, Ed.
@@ -86,7 +80,7 @@ Copyright Notice
    not be created outside the IETF Standards Process, except to format
    it for publication as an RFC or to translate it into languages other
    than English.
-
+```
 Table of Contents
 
    1. Introduction ....................................................8
@@ -387,7 +381,7 @@ RFC 7530                          NFSv4                       March 2015
 
 
 
-
+```
 
 
 
@@ -396,9 +390,9 @@ Haynes & Noveck              Standards Track                    [Page 7]
 RFC 7530                          NFSv4                       March 2015
 
 
-1.  Introduction
+# 1.  Introduction
 
-1.1.  Requirements Language
+## 1.1.  Requirements Language
 
    The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
    "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
