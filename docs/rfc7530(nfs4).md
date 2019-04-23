@@ -52,6 +52,8 @@ Information about the current status of this document, any errata, and how to pr
    it for publication as an RFC or to translate it into languages other
    than English.
 
+<!--TOC-->
+
 **Table of Contents**
 ```
    1. Introduction ....................................................8
