@@ -1,66 +1,31 @@
+> Internet Engineering Task Force (IETF)                    T. Haynes, Ed.
+>
+> Request for Comments: 7530                                  Primary Data
+>
+> Obsoletes: 3530                                           D. Noveck, Ed.
+>
+> Category: Standards Track                                           Dell
+>
+> ISSN: 2070-1721                                               March 2015
 
+**Network File System (NFS) Version 4 Protocol**
 
+**Abstract**
 
+The Network File System (NFS) version 4 protocol is a distributed file system protocol that builds on the heritage of NFS protocol version 2 (RFC 1094) and version 3 (RFC 1813).  Unlike earlier
+versions, the NFS version 4 protocol supports traditional file access while integrating support for file locking and the MOUNT protocol. In addition, support for strong security (and its negotiation),COMPOUND operations, client caching, and internationalization has been added.  Of course, attention has been applied to making NFS version 4 operate well in an Internet environment.
 
+This document, together with the companion External Data Representation (XDR) description document, RFC 7531, obsoletes RFC 3530 as the definition of the NFS version 4 protocol.
 
+**Status of This Memo**
 
-Internet Engineering Task Force (IETF)                    T. Haynes, Ed.
-Request for Comments: 7530                                  Primary Data
-Obsoletes: 3530                                           D. Noveck, Ed.
-Category: Standards Track                                           Dell
-ISSN: 2070-1721                                               March 2015
+This is an Internet Standards Track document.
 
+This document is a product of the Internet Engineering Task Force (IETF).  It represents the consensus of the IETF community.  It has received public review and has been approved for publication by the Internet Engineering Steering Group (IESG).  Further information on Internet Standards is available in Section 2 of RFC 5741.
 
-              Network File System (NFS) Version 4 Protocol
+Information about the current status of this document, any errata, and how to provide feedback on it may be obtained at http://www.rfc-editor.org/info/rfc7530.
 
-Abstract
-
-   The Network File System (NFS) version 4 protocol is a distributed
-   file system protocol that builds on the heritage of NFS protocol
-   version 2 (RFC 1094) and version 3 (RFC 1813).  Unlike earlier
-   versions, the NFS version 4 protocol supports traditional file access
-   while integrating support for file locking and the MOUNT protocol.
-   In addition, support for strong security (and its negotiation),
-   COMPOUND operations, client caching, and internationalization has
-   been added.  Of course, attention has been applied to making NFS
-   version 4 operate well in an Internet environment.
-
-   This document, together with the companion External Data
-   Representation (XDR) description document, RFC 7531, obsoletes RFC
-   3530 as the definition of the NFS version 4 protocol.
-
-Status of This Memo
-
-   This is an Internet Standards Track document.
-
-   This document is a product of the Internet Engineering Task Force
-   (IETF).  It represents the consensus of the IETF community.  It has
-   received public review and has been approved for publication by the
-   Internet Engineering Steering Group (IESG).  Further information on
-   Internet Standards is available in Section 2 of RFC 5741.
-
-   Information about the current status of this document, any errata,
-   and how to provide feedback on it may be obtained at
-   http://www.rfc-editor.org/info/rfc7530.
-
-
-
-
-
-
-
-
-
-
-
-
-
-Haynes & Noveck              Standards Track                    [Page 1]
-
-RFC 7530                          NFSv4                       March 2015
-
-
-Copyright Notice
+**Copyright Notice**
 
    Copyright (c) 2015 IETF Trust and the persons identified as the
    document authors.  All rights reserved.
@@ -87,8 +52,10 @@ Copyright Notice
    it for publication as an RFC or to translate it into languages other
    than English.
 
-Table of Contents
+<!--TOC-->
 
+**Table of Contents**
+```
    1. Introduction ....................................................8
       1.1. Requirements Language ......................................8
       1.2. NFS Version 4 Goals ........................................8
@@ -387,7 +354,7 @@ RFC 7530                          NFSv4                       March 2015
 
 
 
-
+```
 
 
 
@@ -396,9 +363,9 @@ Haynes & Noveck              Standards Track                    [Page 7]
 RFC 7530                          NFSv4                       March 2015
 
 
-1.  Introduction
+# 1.  Introduction
 
-1.1.  Requirements Language
+## 1.1.  Requirements Language
 
    The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
    "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this
